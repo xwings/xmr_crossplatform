@@ -28,7 +28,7 @@
 #include "globalStates.hpp"
 #include "configEditor.hpp"
 #include "params.hpp"
-#include "cpu_jconf.hpp"
+#include "jconf_cpu.hpp"
 
 #include "executor.hpp"
 #include "minethd.hpp"
@@ -65,6 +65,14 @@
 
 #endif //_WIN32
 
+#ifdef USE_C_PTHREAD
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include <sched.h>
+#include <pthread.h>
+#endif
+
 namespace xmrstak
 {
 namespace cpu
@@ -100,7 +108,12 @@ bool minethd::thd_setaffinity(std::thread::native_handle_type h, uint64_t cpu_id
 	cpu_set_t mn;
 	CPU_ZERO(&mn);
 	CPU_SET(cpu_id, &mn);
+#ifdef USE_C_PTHREAD
+    return sched_setaffinity(h, sizeof(cpu_set_t), &mn) == 0;
+#else
 	return pthread_setaffinity_np(h, sizeof(cpu_set_t), &mn) == 0;
+#endif
+
 #endif
 }
 
@@ -468,7 +481,11 @@ void minethd::work_main()
 	order_fix.set_value();
 	std::unique_lock<std::mutex> lck(thd_aff_set);
 	lck.release();
+#ifdef USE_C_PTHREAD
+    sched_yield();
+#else
 	std::this_thread::yield();
+#endif
 
 	cryptonight_ctx* ctx;
 	uint64_t iCount = 0;
@@ -557,7 +574,11 @@ void minethd::work_main()
 				executor::inst()->push_event(ex_event(result, oWork.iPoolId));
 			result.iNonce++;
 
+#ifdef USE_C_PTHREAD
+            sched_yield();
+#else
 			std::this_thread::yield();
+#endif
 		}
 
 		globalStates::inst().consume_work(oWork, iJobNo);
@@ -829,7 +850,11 @@ void minethd::multiway_work_main()
 	order_fix.set_value();
 	std::unique_lock<std::mutex> lck(thd_aff_set);
 	lck.release();
+#ifdef USE_C_PTHREAD
+    sched_yield();
+#else
 	std::this_thread::yield();
+#endif
 
 	cryptonight_ctx *ctx[MAX_N];
 	uint64_t iCount = 0;
@@ -935,7 +960,11 @@ void minethd::multiway_work_main()
 				}
 			}
 
+#ifdef USE_C_PTHREAD
+            sched_yield();
+#else
 			std::this_thread::yield();
+#endif
 		}
 
 		globalStates::inst().consume_work(oWork, iJobNo);

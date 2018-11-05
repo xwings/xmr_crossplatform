@@ -35,6 +35,10 @@
 #include "jext.hpp"
 #include "version.hpp"
 
+#ifdef USE_C_PTHREAD
+#include <pthread.h>
+#endif
+
 using namespace rapidjson;
 
 struct jpsock::call_rsp
@@ -115,7 +119,9 @@ jpsock::jpsock(size_t id, const char* sAddr, const char* sLogin, const char* sRi
 	sck = new plain_socket(this);
 #endif
 
+#ifndef USE_C_PTHREAD
 	oRecvThd = nullptr;
+#endif
 	bRunning = false;
 	bLoggedIn = false;
 	iJobDiff = 0;
@@ -189,6 +195,20 @@ bool jpsock::set_socket_error_strerr(const char* a, int res)
 	return set_socket_error(a, sock_gai_strerror(res, sSockErrText, sizeof(sSockErrText)));
 }
 
+#ifdef USE_C_PTHREAD
+void *jpsock::jpsock_thread_c(void *arg)
+{
+    jpsock *jp;
+
+    jp = (jpsock *)arg;
+    pthread_detach(pthread_self());
+
+    jp->jpsock_thread();
+
+    return NULL;
+}
+#endif
+
 void jpsock::jpsock_thread()
 {
 	jpsock_thd_main();
@@ -198,15 +218,27 @@ void jpsock::jpsock_thread()
 
 	executor::inst()->push_event(ex_event(std::move(sSocketError), quiet_close, pool_id));
 
+#ifdef USE_C_PTHREAD
+    pthread_mutex_lock(&call_mutex);
+#else
 	std::unique_lock<std::mutex> mlock(call_mutex);
+#endif
 	bool bWait = prv->oCallRsp.pCallData != nullptr;
 
 	// If a call is waiting, wait a little bit before blowing it out of the water
 	if(bWait)
 	{
+#ifdef USE_C_PTHREAD
+        pthread_mutex_unlock(&call_mutex);
+#else
 		mlock.unlock();
+#endif
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+#ifdef USE_C_PTHREAD
+        pthread_mutex_lock(&call_mutex);
+#else
 		mlock.lock();
+#endif
 	}
 
 	// If the call is still there send an error to end it
@@ -219,10 +251,18 @@ void jpsock::jpsock_thread()
 		prv->oCallRsp.iMessageId = 0;
 		bCallWaiting = true;
 	}
+#ifdef USE_C_PTHREAD
+    pthread_mutex_unlock(&call_mutex);
+#else
 	mlock.unlock();
+#endif
 
 	if(bCallWaiting)
+#ifdef USE_C_PTHREAD
+        pthread_cond_signal(&call_cond);
+#else
 		call_cond.notify_one();
+#endif
 
 	bLoggedIn = false;
 
@@ -231,9 +271,16 @@ void jpsock::jpsock_thread()
 	else
 		disconnect_time = 0;
 
+#ifdef USE_C_PTHREAD
+    pthread_mutex_lock(&job_mutex);
+#else
 	std::unique_lock<std::mutex> lck(job_mutex);
+#endif
 	memset((void *)(&oCurrentJob), 0, sizeof(oCurrentJob));
 	bRunning = false;
+#ifdef USE_C_PTHREAD
+    pthread_mutex_unlock(&job_mutex);
+#endif
 }
 
 bool jpsock::jpsock_thd_main()
@@ -358,11 +405,19 @@ bool jpsock::process_line(char* line, size_t len)
 			sError = msg->GetString();
 		}
 
+#ifdef USE_C_PTHREAD
+        pthread_mutex_lock(&call_mutex);
+#else
 		std::unique_lock<std::mutex> mlock(call_mutex);
+#endif
 		if (prv->oCallRsp.pCallData == nullptr)
 		{
 			/*Server sent us a call reply without us making a call*/
+#ifdef USE_C_PTHREAD
+            pthread_mutex_unlock(&call_mutex);
+#else
 			mlock.unlock();
+#endif
 			return set_socket_error("PARSE error: Unexpected call response");
 		}
 
@@ -379,8 +434,13 @@ bool jpsock::process_line(char* line, size_t len)
 		else
 			prv->oCallRsp.pCallData->CopyFrom(*mt, prv->callAllocator);
 
+#ifdef USE_C_PTHREAD
+        pthread_mutex_unlock(&call_mutex);
+        pthread_cond_signal(&call_cond);
+#else
 		mlock.unlock();
 		call_cond.notify_one();
+#endif
 
 		return true;
 	}
@@ -388,7 +448,11 @@ bool jpsock::process_line(char* line, size_t len)
 
 bool jpsock::process_pool_job(const opq_json_val* params, const uint64_t messageId)
 {
+#ifdef USE_C_PTHREAD
+    pthread_mutex_lock(&job_mutex);
+#else
 	std::unique_lock<std::mutex> mlock(job_mutex);
+#endif
 	if(messageId < iLastMessageId)
 	{
 		/* In the case where the processed job message id is lesser than the last
@@ -398,7 +462,11 @@ bool jpsock::process_pool_job(const opq_json_val* params, const uint64_t message
 	}
 	iLastMessageId = messageId;
 
+#ifdef USE_C_PTHREAD
+    pthread_mutex_unlock(&job_mutex);
+#else
 	mlock.unlock();
+#endif
 
 	if (!params->val->IsObject())
 		return set_socket_error("PARSE error: Job error 1");
@@ -417,7 +485,11 @@ bool jpsock::process_pool_job(const opq_json_val* params, const uint64_t message
 
 	if(motd != nullptr && motd->IsString() && (motd->GetStringLength() & 0x01) == 0)
 	{
+#ifdef USE_C_PTHREAD
+        pthread_mutex_lock(&motd_mutex);
+#else
 		std::unique_lock<std::mutex> lck(motd_mutex);
+#endif
 		if(motd->GetStringLength() > 0)
 		{
 			pool_motd.resize(motd->GetStringLength()/2 + 1);
@@ -426,6 +498,9 @@ bool jpsock::process_pool_job(const opq_json_val* params, const uint64_t message
 		}
 		else
 			pool_motd.clear();
+#ifdef USE_C_PTHREAD
+        pthread_mutex_unlock(&motd_mutex);
+#endif
 	}
 
 	if (jobid->GetStringLength() >= sizeof(pool_job::sJobID)) // Note >=
@@ -443,16 +518,27 @@ bool jpsock::process_pool_job(const opq_json_val* params, const uint64_t message
 		return set_socket_error("PARSE error: Job error 4");
 
 	// lock reading of oCurrentJob
+#ifdef USE_C_PTHREAD
+    pthread_mutex_lock(&job_mutex);
+#else
 	std::unique_lock<std::mutex> jobIdLock(job_mutex);
+#endif
 	// compare possible non equal length job id's
 	if(iWorkLen == oCurrentJob.iWorkLen &&
 		memcmp(oPoolJob.bWorkBlob, oCurrentJob.bWorkBlob, iWorkLen) == 0 &&
 		strcmp(jobid->GetString(), oCurrentJob.sJobID) == 0
 	)
 	{
+#ifdef USE_C_PTHREAD
+        pthread_mutex_unlock(&job_mutex);
+#endif
 		return set_socket_error("Duplicate equal job detected! Please contact your pool admin.");
 	}
+#ifdef USE_C_PTHREAD
+    pthread_mutex_unlock(&job_mutex);
+#else
 	jobIdLock.unlock();
+#endif
 
 	memset(oPoolJob.sJobID, 0, sizeof(pool_job::sJobID));
 	memcpy(oPoolJob.sJobID, jobid->GetString(), jobid->GetStringLength()); //Bounds checking at proto error 3
@@ -482,9 +568,17 @@ bool jpsock::process_pool_job(const opq_json_val* params, const uint64_t message
 
 	iJobDiff = t64_to_diff(oPoolJob.iTarget);
 
+#ifdef USE_C_PTHREAD
+    pthread_mutex_lock(&job_mutex);
+#else
 	std::unique_lock<std::mutex> lck(job_mutex);
+#endif
 	oCurrentJob = oPoolJob;
+#ifdef USE_C_PTHREAD
+    pthread_mutex_unlock(&job_mutex);
+#else
 	lck.unlock();
+#endif
 	// send event after current job data are updated
 	executor::inst()->push_event(ex_event(oPoolJob, pool_id));
 
@@ -505,7 +599,12 @@ bool jpsock::connect(std::string& sConnectError)
 	{
 		bRunning = true;
 		disconnect_time = 0;
+#ifdef USE_C_PTHREAD
+        pthread_t pt;
+        pthread_create(&pt, NULL, &jpsock::jpsock_thread_c, this);
+#else
 		oRecvThd = new std::thread(&jpsock::jpsock_thread, this);
+#endif
 		return true;
 	}
 
@@ -519,12 +618,14 @@ void jpsock::disconnect(bool quiet)
 	quiet_close = quiet;
 	sck->close(false);
 
+#ifndef USE_C_PTHREAD
 	if(oRecvThd != nullptr)
 	{
 		oRecvThd->join();
 		delete oRecvThd;
 		oRecvThd = nullptr;
 	}
+#endif
 
 	sck->close(true);
 	quiet_close = false;
@@ -538,9 +639,17 @@ bool jpsock::cmd_ret_wait(const char* sPacket, opq_json_val& poResult, uint64_t&
 	prv->oCallValue.SetNull();
 	prv->callAllocator.Clear();
 
+#ifdef USE_C_PTHREAD
+    pthread_mutex_lock(&call_mutex);
+#else
 	std::unique_lock<std::mutex> mlock(call_mutex);
+#endif
 	prv->oCallRsp = call_rsp(&prv->oCallValue);
+#ifdef USE_C_PTHREAD
+    pthread_mutex_unlock(&call_mutex);
+#else
 	mlock.unlock();
+#endif
 
 	if(!sck->send(sPacket))
 	{
@@ -550,13 +659,27 @@ bool jpsock::cmd_ret_wait(const char* sPacket, opq_json_val& poResult, uint64_t&
 
 	//Success is true if the server approves, result is true if there was no socket error
 	bool bSuccess;
+#ifdef USE_C_PTHREAD
+    pthread_mutex_lock(&call_mutex);
+    bool bResult = true;
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += jconf::inst()->GetCallTimeout();
+    pthread_cond_timedwait(&call_cond, &call_mutex, &ts);
+    bResult = prv->oCallRsp.bHaveResponse;
+#else
 	mlock.lock();
 	bool bResult = call_cond.wait_for(mlock, std::chrono::seconds(jconf::inst()->GetCallTimeout()),
 		[&]() { return prv->oCallRsp.bHaveResponse; });
+#endif
 
 	bSuccess = prv->oCallRsp.pCallData != nullptr;
 	prv->oCallRsp.pCallData = nullptr;
+#ifdef USE_C_PTHREAD
+    pthread_mutex_unlock(&call_mutex);
+#else
 	mlock.unlock();
+#endif
 
 	if(bHaveSocketError)
 		return false;
@@ -727,18 +850,33 @@ bool jpsock::cmd_submit(const char* sJobId, uint32_t iNonce, const uint8_t* bRes
 
 void jpsock::save_nonce(uint32_t nonce)
 {
+#ifdef USE_C_PTHREAD
+    pthread_mutex_lock(&job_mutex);
+#else
 	std::unique_lock<std::mutex> lck(job_mutex);
+#endif
 	oCurrentJob.iSavedNonce = nonce;
+#ifdef USE_C_PTHREAD
+    pthread_mutex_unlock(&job_mutex);
+#endif
 }
 
 bool jpsock::get_current_job(pool_job& job)
 {
+#ifdef USE_C_PTHREAD
+    pthread_mutex_lock(&job_mutex);
+#else
 	std::unique_lock<std::mutex> lck(job_mutex);
+#endif
 
 	if(oCurrentJob.iWorkLen == 0)
 		return false;
 
 	job = oCurrentJob;
+
+#ifdef USE_C_PTHREAD
+    pthread_mutex_unlock(&job_mutex);
+#endif
 	return true;
 }
 
@@ -747,13 +885,23 @@ bool jpsock::get_pool_motd(std::string& strin)
 	if(!ext_motd)
 		return false;
 
+#ifdef USE_C_PTHREAD
+    pthread_mutex_unlock(&motd_mutex);
+#else
 	std::unique_lock<std::mutex> lck(motd_mutex);
+#endif
 	if(pool_motd.size() > 0)
 	{
 		strin.assign(pool_motd);
+#ifdef USE_C_PTHREAD
+        pthread_mutex_unlock(&motd_mutex);
+#endif
 		return true;
 	}
 
+#ifdef USE_C_PTHREAD
+    pthread_mutex_unlock(&motd_mutex);
+#endif
 	return false;
 }
 

@@ -16,6 +16,10 @@
 #include <future>
 #include <chrono>
 
+#ifdef USE_C_PTHREAD
+#include <pthread.h>
+#endif
+
 class jpsock;
 
 namespace xmrstak
@@ -38,12 +42,20 @@ public:
 		return env.pExecutor;
 	};
 
+#ifdef USE_C_PTHREAD
+    void ex_start(bool daemon);
+#else
 	void ex_start(bool daemon) { daemon ? ex_main() : std::thread(&executor::ex_main, this).detach(); }
+#endif
 
 	void get_http_report(ex_event_name ev_id, std::string& data);
 
 	inline void push_event(ex_event&& ev) { oEventQ.push(std::move(ev)); }
 	void push_timed_event(ex_event&& ev, size_t sec);
+
+#ifdef USE_C_PTHREAD
+	static void *ex_clock_thd_c(void *arg);
+#endif
 
 private:
 	struct timed_event
@@ -80,7 +92,11 @@ private:
 	};
 
 	std::list<timed_event> lTimedEvents;
+#ifdef USE_C_PTHREAD
+    pthread_mutex_t timed_event_mutex = PTHREAD_MUTEX_INITIALIZER;
+#else
 	std::mutex timed_event_mutex;
+#endif
 	thdq<ex_event> oEventQ;
 
 	xmrstak::telemetry* telem;
@@ -96,6 +112,9 @@ private:
 
 	executor();
 
+#ifdef USE_C_PTHREAD
+    static void *ex_main_c(void *arg);
+#endif
 	void ex_main();
 
 	void ex_clock_thd();

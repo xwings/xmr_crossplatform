@@ -21,7 +21,7 @@
   *
   */
 
-#include "cpu_jconf.hpp"
+#include "jconf_cpu.hpp"
 #include "console.hpp"
 #include "jext.hpp"
 

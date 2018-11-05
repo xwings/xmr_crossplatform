@@ -10,6 +10,9 @@
 #include <thread>
 #include <string>
 
+#ifdef USE_C_PTHREAD
+#include <pthread.h>
+#endif
 
 /* Our pool can have two kinds of errors:
 	- Parsing or connection error
@@ -81,6 +84,10 @@ public:
 	bool set_socket_error_strerr(const char* a);
 	bool set_socket_error_strerr(const char* a, int res);
 
+#ifdef USE_C_PTHREAD
+	static void *jpsock_thread_c(void *arg);
+#endif
+
 private:
 	std::string net_addr;
 	std::string usr_login;
@@ -99,7 +106,11 @@ private:
 	bool ext_motd = false;
 
 	std::string pool_motd;
+#ifdef USE_C_PTHREAD
+    pthread_mutex_t motd_mutex = PTHREAD_MUTEX_INITIALIZER;
+#else
 	std::mutex motd_mutex;
+#endif
 
 	size_t connect_time = 0;
 	std::atomic<size_t> connect_attempts;
@@ -133,11 +144,17 @@ private:
 	std::string sSocketError;
 	std::atomic<bool> bHaveSocketError;
 
+#ifdef USE_C_PTHREAD
+    pthread_mutex_t call_mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_cond_t call_cond = PTHREAD_COND_INITIALIZER;
+    pthread_mutex_t job_mutex = PTHREAD_MUTEX_INITIALIZER;
+#else
 	std::mutex call_mutex;
 	std::condition_variable call_cond;
 	std::thread* oRecvThd;
 
 	std::mutex job_mutex;
+#endif
 	pool_job oCurrentJob;
 
 	opaque_private* prv;

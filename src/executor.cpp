@@ -60,9 +60,29 @@ executor::executor()
 
 void executor::push_timed_event(ex_event&& ev, size_t sec)
 {
+#ifdef USE_C_PTHREAD
+    pthread_mutex_lock(&timed_event_mutex);
+#else
 	std::unique_lock<std::mutex> lck(timed_event_mutex);
+#endif
 	lTimedEvents.emplace_back(std::move(ev), sec_to_ticks(sec));
+#ifdef USE_C_PTHREAD
+    pthread_mutex_unlock(&timed_event_mutex);
+#endif
 }
+
+#ifdef USE_C_PTHREAD
+void *executor::ex_clock_thd_c(void *arg)
+{
+    executor *exe;
+
+    exe = (executor *)arg;
+
+    exe->ex_clock_thd();
+
+    return NULL;
+}
+#endif
 
 void executor::ex_clock_thd()
 {
@@ -78,7 +98,11 @@ void executor::ex_clock_thd()
 			push_event(ex_event(EV_EVAL_POOL_CHOICE));
 
 		// Service timed events
+#ifdef USE_C_PTHREAD
+        pthread_mutex_lock(&timed_event_mutex);
+#else
 		std::unique_lock<std::mutex> lck(timed_event_mutex);
+#endif
 		std::list<timed_event>::iterator ev = lTimedEvents.begin();
 		while (ev != lTimedEvents.end())
 		{
@@ -91,7 +115,11 @@ void executor::ex_clock_thd()
 			else
 				ev++;
 		}
+#ifdef USE_C_PTHREAD
+        pthread_mutex_unlock(&timed_event_mutex);
+#else
 		lck.unlock();
+#endif
 	}
 }
 
@@ -491,6 +519,30 @@ void disable_sigpipe()
 inline void disable_sigpipe() {}
 #endif
 
+#ifdef USE_C_PTHREAD
+void executor::ex_start(bool daemon)
+{
+    if (daemon) {
+        ex_main();
+    } else {
+        pthread_t pt;
+        pthread_create(&pt, NULL, &executor::ex_main_c, this);
+    }
+}
+
+void *executor::ex_main_c(void *arg)
+{
+    executor *exe;
+
+    exe = (executor *)arg;
+    pthread_detach(pthread_self());
+
+    exe->ex_main();
+
+    return NULL;
+}
+#endif
+
 void executor::ex_main()
 {
 	disable_sigpipe();
@@ -592,7 +644,13 @@ void executor::ex_main()
 	}
 
 	ex_event ev;
+
+#ifdef USE_C_PTHREAD
+    pthread_t t;
+    pthread_create(&t, NULL, &executor::ex_clock_thd_c, this);
+#else
 	std::thread clock_thd(&executor::ex_clock_thd, this);
+#endif
 
 	eval_pool_choice();
 
