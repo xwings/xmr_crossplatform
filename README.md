@@ -9,12 +9,13 @@
 
 ## tested
 
-    支持GNU toolchain(gcc + glibc + binutils)。
     已测试平台raspberry pi 2b(arm)
     已测试平台raspberry pi 3b(aarch64)
+    已测试平台xiaoya(android-4.4.4)
+    已测试平台tenda-ac18(arm with kernel 2.6.x)
 
 ## todo
 
     测试更多的架构平台以及系统的ABI兼容。
     精简二进制程序大小。
-    部分设备运行环境仅支持老版本的工具链，改写部分C++11代码。
+    升级到v8加密算法。
