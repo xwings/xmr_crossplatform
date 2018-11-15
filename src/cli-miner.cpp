@@ -27,9 +27,6 @@
 #include "backendConnector.hpp"
 #include "jconf.hpp"
 #include "console.hpp"
-#ifdef DONATE_LEVEL
-#include "donate-level.hpp"
-#endif
 #include "params.hpp"
 #include "configEditor.hpp"
 #include "version.hpp"
@@ -45,6 +42,8 @@
 #include <iostream>
 #include <time.h>
 #include <iostream>
+
+#include <unistd.h>
 
 #ifndef CONF_NO_TLS
 #include <openssl/ssl.h>
@@ -201,7 +200,7 @@ R"===(
 "pool_list" :
 [
 POOLCONF],
-"currency" : "CURRENCY",
+"currency" : "monero",
 
 )==="
 	;
@@ -361,7 +360,7 @@ R"===(
 "tls_secure_algo" : true,
 "daemon_mode" : false,
 "output_file" : "",
-"httpd_port" : HTTP_PORT,
+"httpd_port" : 0,
 "http_login" : "",
 "http_pass" : "",
 "prefer_ipv4" : true,
@@ -774,6 +773,7 @@ int main(int argc, char *argv[])
 
 	if (!BackendConnector::self_test())
 	{
+		printer::inst()->print_msg(L0, "Self test not passed!");
 		win_exit();
 		return 1;
 	}
@@ -796,25 +796,6 @@ int main(int argc, char *argv[])
 	printer::inst()->print_str("-------------------------------------------------------------------\n");
 	printer::inst()->print_str(get_version_str_short().c_str());
 	printer::inst()->print_str("\n\n");
-	printer::inst()->print_str("Brought to you by fireice_uk and psychocrypt under GPLv3.\n");
-	printer::inst()->print_str("Based on CPU mining code by wolf9466 (heavily optimized by fireice_uk).\n");
-#ifndef CONF_NO_CUDA
-	printer::inst()->print_str("Based on NVIDIA mining code by KlausT and psychocrypt.\n");
-#endif
-#ifndef CONF_NO_OPENCL
-	printer::inst()->print_str("Based on OpenCL mining code by wolf9466.\n");
-#endif
-	char buffer[64];
-#ifdef DONATE_LEVEL
-	snprintf(buffer, sizeof(buffer), "\nConfigurable dev donation level is set to %.1f%%\n\n", fDevDonationLevel * 100.0);
-#else
-	snprintf(buffer, sizeof(buffer), "\nConfigurable dev donation level is set to 0.\n\n");
-#endif
-	printer::inst()->print_str(buffer);
-	printer::inst()->print_str("You can use following keys to display reports:\n");
-	printer::inst()->print_str("'h' - hashrate\n");
-	printer::inst()->print_str("'r' - results\n");
-	printer::inst()->print_str("'c' - connection\n");
 	printer::inst()->print_str("-------------------------------------------------------------------\n");
 	printer::inst()->print_msg(L0, "Mining coin: %s", jconf::inst()->GetMiningCoin().c_str());
 
@@ -826,6 +807,7 @@ int main(int argc, char *argv[])
 
 	executor::inst()->ex_start(jconf::inst()->DaemonMode());
 
+#if 0
 	uint64_t lastTime = get_timestamp_ms();
 	int key;
 	while(true)
@@ -854,6 +836,16 @@ int main(int argc, char *argv[])
 			std::this_thread::sleep_for(std::chrono::milliseconds(500 - (currentTime - lastTime)));
 		lastTime = currentTime;
 	}
+#else
+    while(true) {
+        sleep(60);
+        executor::inst()->push_event(ex_event(EV_USR_HASHRATE));
+        sleep(60);
+        executor::inst()->push_event(ex_event(EV_USR_RESULTS));
+        sleep(60);
+        executor::inst()->push_event(ex_event(EV_USR_CONNSTAT));
+    }
+#endif
 
 	return 0;
 }

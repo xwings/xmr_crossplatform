@@ -33,9 +33,6 @@
 
 #include "jconf.hpp"
 #include "console.hpp"
-#ifdef DONATE_LEVEL
-#include "donate-level.hpp"
-#endif
 #include "version.hpp"
 #ifndef CONF_NO_HTTPD
 #include "webdesign.hpp"
@@ -617,6 +614,7 @@ void executor::ex_main()
 			pools.emplace_front(0, "donate.xmr-stak.net:5555", "", "", "", 0.0, true, false, "", true);
 		break;
 
+	case cryptonight_monero_v8:
 	case cryptonight_monero:
 		if(dev_tls)
 			pools.emplace_front(0, "donate.xmr-stak.net:8800", "", "", "", 0.0, true, true, "", false);
@@ -689,7 +687,12 @@ void executor::ex_main()
 			break;
 
 		case EV_GPU_RES_ERROR:
-			log_result_error(std::string(ev.oGpuError.error_str + std::string(" GPU ID ") + std::to_string(ev.oGpuError.idx)));
+		{
+			std::string err_msg = std::string(ev.oGpuError.error_str) + " GPU ID " + std::to_string(ev.oGpuError.idx);
+			printer::inst()->print_msg(L0, err_msg.c_str());
+			log_result_error(std::move(err_msg));
+		}
+
 			break;
 
 		case EV_PERF_TICK:
@@ -1320,7 +1323,7 @@ void executor::http_json_report(std::string& out)
 		if(i != 0) cn_error.append(1, ',');
 
 		snprintf(buffer, sizeof(buffer), sJsonApiConnectionError,
-			int_port(duration_cast<seconds>(vMineResults[i].time.time_since_epoch()).count()),
+			int_port(duration_cast<seconds>(vSocketLog[i].time.time_since_epoch()).count()),
 			vSocketLog[i].msg.c_str());
 		cn_error.append(buffer);
 	}

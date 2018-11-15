@@ -10,7 +10,7 @@
 #endif
 
 #ifndef GIT_BRANCH
-#define GIT_BRANCH unknown
+#define GIT_BRANCH not_x86
 #endif
 
 #ifndef BACKEND_TYPE
@@ -18,7 +18,7 @@
 #endif
 
 #define XMR_STAK_NAME "xmr-stak"
-#define XMR_STAK_VERSION "2.4.7"
+#define XMR_STAK_VERSION "2.5.2"
 
 #if defined(_WIN32)
 #define OS_TYPE "win"

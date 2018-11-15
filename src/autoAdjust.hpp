@@ -1,6 +1,6 @@
 #pragma once
 
-#include "jconf.hpp"
+#include "jconf_cpu.hpp"
 
 #include "console.hpp"
 #include "jconf.hpp"
@@ -47,22 +47,10 @@ public:
 		// load the template of the backend config into a char variable
 		const char *tpl =
 R"===(
-"call_timeout" : 10,
-"retry_time" : 30,
-"giveup_limit" : 0,
-"verbose_level" : 3,
-"print_motd" : true,
-"h_print_time" : 60,
-"aes_override" : null,
-"use_slow_memory" : "warn",
-"tls_secure_algo" : true,
-"daemon_mode" : false,
-"output_file" : "",
-"httpd_port" : HTTP_PORT,
-"http_login" : "",
-"http_pass" : "",
-"prefer_ipv4" : true,
-
+"cpu_threads_conf" :
+[
+CPUCONFIG
+],
 )==="
 		;
 		configTpl.set( std::string(tpl) );
@@ -75,7 +63,7 @@ R"===(
 			if(L3KB_size < halfHashMemSizeKB || L3KB_size > (halfHashMemSizeKB * 2048))
 				printer::inst()->print_msg(L0, "Autoconf failed: L3 size sanity check failed - %u KB.", L3KB_size);
 
-			conf += std::string("    { \"low_power_mode\" : false, \"no_prefetch\" : true, \"affine_to_cpu\" : false },\n");
+			conf += std::string("    { \"low_power_mode\" : false, \"no_prefetch\" : true,  \"asm\" : \"off\", \"affine_to_cpu\" : false },\n");
 			printer::inst()->print_msg(L0, "Autoconf FAILED. Create config for a single thread. Please try to add new ones until the hashrate slows down.");
 		}
 		else
@@ -99,7 +87,7 @@ R"===(
 
 				conf += std::string("    { \"low_power_mode\" : ");
 				conf += std::string(double_mode ? "true" : "false");
-				conf += std::string(", \"no_prefetch\" : true, \"affine_to_cpu\" : ");
+				conf += std::string(", \"no_prefetch\" : true, \"asm\" : \"off\", \"affine_to_cpu\" : ");
 				conf += std::to_string(aff_id);
 				conf += std::string(" },\n");
 

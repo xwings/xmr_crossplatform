@@ -5,9 +5,6 @@
 #include "iBackend.hpp"
 #include "environment.hpp"
 #include "msgstruct.hpp"
-#ifdef DONATE_LEVEL
-#include "donate-level.hpp"
-#endif
 
 #include <atomic>
 #include <array>
@@ -77,18 +74,7 @@ private:
 
 	inline bool is_dev_time()
 	{
-#ifdef DONATE_LEVEL
-
-		//Add 2 seconds to compensate for connect
-		constexpr size_t dev_portion = static_cast<size_t>(double(iDevDonatePeriod) * fDevDonationLevel + 2.);
-
-		if(dev_portion < 12) //No point in bothering with less than 10s
-			return false;
-
-		return (get_timestamp() - dev_timestamp) % iDevDonatePeriod >= (iDevDonatePeriod - dev_portion);
-#else
         return false;
-#endif
 	};
 
 	std::list<timed_event> lTimedEvents;

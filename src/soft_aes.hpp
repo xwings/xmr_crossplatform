@@ -36,10 +36,6 @@
 
 #include <inttypes.h>
 
-#ifndef __x86_64__
-#include <string.h>
-#include <stdlib.h>
-#endif
 
 #define saes_data(w) {\
 	w(0x63), w(0x7c), w(0x77), w(0x7b), w(0xf2), w(0x6b), w(0x6f), w(0xc5),\
@@ -93,7 +89,86 @@ alignas(16) const uint32_t saes_table[4][256] = { saes_data(saes_u0), saes_data(
 alignas(16) const uint8_t  saes_sbox[256] = saes_data(saes_h0);
 
 
-#ifndef __x86_64__
+#ifdef __x86_64__
+
+#define _mm_aesenc_si128(...) soft_aesenc(__VA_ARGS__)
+#define _mm_aeskeygenassist_si128(...) soft_aeskeygenassist(__VA_ARGS__)
+
+#else
+
+#include <string.h>
+#include <stdlib.h>
+
+#if 0
+/* math lib: long double sqrtl(long double) */
+typedef union {int64_t i[2]; long double x; double d[2]; } mynumber;
+
+static const double
+  t512 = 0x1p512,   /* 0x5ff0000000000000 */
+  tm256 = 0x1p-256, /* 0x2ff0000000000000 */
+  two54 = 0x1p54,	/* 0x4350000000000000 */
+  twom54 = 0x1p-54;	/* 0x3C90000000000000 */
+
+/*********************************************************************/
+/* An ultimate sqrt routine. Given an IEEE double machine number x   */
+/* it computes the correctly rounded (to nearest) value of square    */
+/* root of x.                                                        */
+/*********************************************************************/
+static long double __ieee754_sqrt(long double x)
+{
+  static const long double big = 134217728.0, big1 = 134217729.0;
+  long double t,s,i;
+  mynumber a,c;
+  uint64_t k, l;
+  int64_t m, n;
+  double d;
+
+  a.x=x;
+  k=a.i[0] & INT64_C(0x7fffffffffffffff);
+  /*----------------- 2^-1022  <= | x |< 2^1024  -----------------*/
+  if (k>INT64_C(0x000fffff00000000) && k<INT64_C(0x7ff0000000000000)) {
+    if (x < 0) return (big1-big1)/(big-big);
+    l = (k&INT64_C(0x001fffffffffffff))|INT64_C(0x3fe0000000000000);
+    if ((a.i[1] & INT64_C(0x7fffffffffffffff)) != 0) {
+      n = (int64_t) ((l - k) * 2) >> 53;
+      m = (a.i[1] >> 52) & 0x7ff;
+      if (m == 0) {
+	a.d[1] *= two54;
+	m = ((a.i[1] >> 52) & 0x7ff) - 54;
+      }
+      m += n;
+      if (m > 0)
+	a.i[1] = (a.i[1] & INT64_C(0x800fffffffffffff)) | (m << 52);
+      else if (m <= -54) {
+	a.i[1] &= INT64_C(0x8000000000000000);
+      } else {
+	m += 54;
+	a.i[1] = (a.i[1] & INT64_C(0x800fffffffffffff)) | (m << 52);
+	a.d[1] *= twom54;
+      }
+    }
+    a.i[0] = l;
+    s = a.x;
+    d = __ieee754_sqrt (a.d[0]);
+    c.i[0] = INT64_C(0x2000000000000000)+((k&INT64_C(0x7fe0000000000000))>>1);
+    c.i[1] = 0;
+    i = d;
+    t = 0.5L * (i + s / i);
+    i = 0.5L * (t + s / t);
+    return c.x * i;
+  }
+  else {
+    if (k>=INT64_C(0x7ff0000000000000))
+      /* sqrt (-Inf) = NaN, sqrt (NaN) = NaN, sqrt (+Inf) = +Inf.  */
+      return x * x + x;
+    if (x == 0) return x;
+    if (x < 0) return (big1-big1)/(big-big);
+    return tm256*__ieee754_sqrt(x*t512);
+  }
+}
+#endif
+
+/* emu x86 code */
 struct mm128int {
     uint32_t x[4];
 };
@@ -325,6 +400,122 @@ static inline void _mm_free(void * mem_addr)
 {
     free(mem_addr);
 }
+
+static inline __m128i _mm_castsi128_pd(__m128i a)
+{
+    return a;
+}
+
+static inline __m128i _mm_cvtsi64_si128(uint64_t a)
+{
+    __m128i c = {
+        .x = {0, 0, 0, 0},
+    };
+
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    memcpy(&(c.x[0]), &a, 8);
+#else
+    memcpy(&(c.x[2]), &a, 8);
+#endif
+
+    return c;
+}
+
+#include <math.h>
+static inline __m128i _mm_sqrt_sd(__m128i a, __m128i b)
+{
+    __m128i c;
+    long double x, y;
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    memcpy(&x, &(b.x[0]), 8);
+#else
+    memcpy(&x, &(b.x[2]), 8);
+#endif
+    y = sqrtl(x);
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    memcpy(&(c.x[0]), &y, 8);
+    memcpy(&(c.x[2]), &(a.x[2]), 8);
+#else
+    memcpy(&(c.x[2]), &y, 8);
+    memcpy(&(c.x[0]), &(a.x[0]), 8);
+#endif
+
+    return c;
+}
+
+static inline __m128i _mm_castpd_si128(__m128i a)
+{
+    return a;
+}
+
+static inline __m128i _mm_setzero_pd(void)
+{
+    __m128i c = {
+        .x = {0, 0, 0, 0},
+    };
+
+    return c;
+}
+
+static inline __m128i _mm_castsi128_ps(__m128i a)
+{
+    return a;
+}
+
+static inline __m128i _mm_castps_si128(__m128i a)
+{
+    return a;
+}
+
+static inline __m128i _mm_srli_si128(__m128i a, int imm8)
+{
+    __m128i b = {
+        .x = {0, 0, 0, 0},
+    };
+    int tmp;
+    int o1;
+
+    tmp = imm8 & 0x000000ff;
+    if (tmp > 15) {
+        tmp = 16;
+    }
+    tmp = tmp * 8;
+
+    uint64_t *p, *q, tmp64;
+    p = (uint64_t *)&a;
+    q = (uint64_t *)&b;
+
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    if (tmp <= 64) {
+        q[0] = p[0] >> tmp;
+        q[1] = p[1] >> tmp;
+        o1 = 64 - tmp;
+        tmp64 = p[1] << o1;
+        q[0] = q[0] + tmp64;
+    } else {
+        o1 = tmp - 64;
+        q[0] = p[1] >> o1;
+        q[1] = 0;
+    }
+#else
+    if (tmp <= 64) {
+        q[0] = p[0] >> tmp;
+        q[1] = p[1] >> tmp;
+        o1 = 64 - tmp;
+        tmp64 = p[0] << o1;
+        q[1] = q[1] + tmp64;
+    } else {
+        o1 = tmp - 64;
+        q[1] = p[0] >> o1;
+        q[0] = 0;
+    }
+#endif
+
+    return b;
+}
+
+#define _mm_prefetch(...) do {} while(0);
+
 #endif
 
 
@@ -366,36 +557,3 @@ static inline __m128i soft_aeskeygenassist(__m128i key, uint8_t rcon)
 	uint32_t X3 = sub_word(_mm_cvtsi128_si32(_mm_shuffle_epi32(key, 0xFF)));
 	return _mm_set_epi32(_rotr(X3, 8) ^ rcon, X3,_rotr(X1, 8) ^ rcon, X1);
 }
-
-#ifdef __x86_64__
-static inline uint64_t _umul128(uint64_t a, uint64_t b, uint64_t* hi)
-{
-        unsigned __int128 r = (unsigned __int128)a * (unsigned __int128)b;
-        *hi = r >> 64;
-        return (uint64_t)r;
-}
-#else
-static inline uint64_t _umul128(uint64_t op1, uint64_t op2, uint64_t *hi)
-{
-    uint64_t u1 = (op1 & 0xffffffff);
-    uint64_t v1 = (op2 & 0xffffffff);
-    uint64_t t = (u1 * v1);
-    uint64_t w3 = (t & 0xffffffff);
-    uint64_t k = (t >> 32);
-    uint64_t lo;
-
-    op1 >>= 32;
-    t = (op1 * v1) + k;
-    k = (t & 0xffffffff);
-    uint64_t w1 = (t >> 32);
-
-    op2 >>= 32;
-    t = (u1 * op2) + k;
-    k = (t >> 32);
-
-    *hi = (op1 * op2) + w1 + k;
-    lo = (t << 32) + w3;
-
-    return lo;
-}
-#endif
